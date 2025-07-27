@@ -237,6 +237,11 @@ func (e *CommentParser) Parse(rawComment string, vcsHost models.VCSHostType) Com
 
 	// Set up the flag parsing depending on the command.
 	switch cmd {
+	case command.Cancel.String():
+		name = command.Cancel
+		flagSet = pflag.NewFlagSet(command.Cancel.String(), pflag.ContinueOnError)
+		flagSet.SetOutput(io.Discard)
+		flagSet.BoolVarP(&verbose, verboseFlagLong, verboseFlagShort, false, "Append Atlantis log to comment.")
 	case command.Plan.String():
 		name = command.Plan
 		flagSet = pflag.NewFlagSet(command.Plan.String(), pflag.ContinueOnError)

@@ -3,6 +3,7 @@ package models
 import (
 	"bufio"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -184,4 +185,12 @@ func (s *ShellCommandRunner) RunCommandAsync(ctx command.ProjectContext) (chan<-
 	}()
 
 	return inCh, outCh
+}
+
+// GetProcess returns the underlying OS process, if available
+func (s *ShellCommandRunner) GetProcess() *os.Process {
+	if s.cmd != nil {
+		return s.cmd.Process
+	}
+	return nil
 }

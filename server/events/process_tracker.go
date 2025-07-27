@@ -18,6 +18,8 @@ type RunningProcess struct {
 	StartTime time.Time
 	// For logical operations, we can store a cancel channel
 	CancelCh chan struct{}
+	// For actual OS processes, we store the process handle
+	OSProcess *os.Process
 }
 
 // ProcessTracker tracks running terraform processes.
@@ -28,6 +30,8 @@ type ProcessTracker interface {
 	GetAllRunningProcesses() []RunningProcess
 	KillProcess(pid int) error
 	CancelOperation(pid int) error
+	// New method for OS process management
+	SetOSProcess(pid int, osProcess *os.Process)
 }
 
 // DefaultProcessTracker implements ProcessTracker.
@@ -81,6 +85,17 @@ func (p *DefaultProcessTracker) RemoveProcess(pid int) {
 	}
 }
 
+// SetOSProcess sets the OS process for a given PID
+func (p *DefaultProcessTracker) SetOSProcess(pid int, osProcess *os.Process) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if process, exists := p.processes[pid]; exists {
+		process.OSProcess = osProcess
+		p.processes[pid] = process
+	}
+}
+
 // GetRunningProcesses returns all processes for a given pull request.
 func (p *DefaultProcessTracker) GetRunningProcesses(pull models.PullRequest) []RunningProcess {
 	p.mutex.RLock()
@@ -119,7 +134,7 @@ func (p *DefaultProcessTracker) KillProcess(pid int) error {
 	return process.Kill()
 }
 
-// CancelOperation cancels a logical operation by closing its cancel channel.
+// CancelOperation cancels a logical operation by closing its cancel channel and killing the OS process.
 func (p *DefaultProcessTracker) CancelOperation(pid int) error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -129,6 +144,15 @@ func (p *DefaultProcessTracker) CancelOperation(pid int) error {
 		return fmt.Errorf("process with PID %d not found", pid)
 	}
 
+	// First try to kill the OS process if we have it
+	if process.OSProcess != nil {
+		if err := process.OSProcess.Kill(); err != nil {
+			// Log but don't fail - we'll still close the cancel channel
+			fmt.Printf("Warning: failed to kill OS process %d: %v\n", process.OSProcess.Pid, err)
+		}
+	}
+
+	// Close the cancel channel for graceful cancellation
 	select {
 	case <-process.CancelCh:
 		// Already cancelled

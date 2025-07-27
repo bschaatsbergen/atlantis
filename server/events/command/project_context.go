@@ -131,6 +131,9 @@ type ProjectContext struct {
 	CustomPolicyCheck bool
 	SilencePRComments []string
 
+	// CancelCh is used to cancel this operation if the user runs atlantis cancel
+	CancelCh <-chan struct{}
+
 	// TeamAllowlistChecker is used to check authorization on a project-level
 	TeamAllowlistChecker TeamAllowlistChecker
 }

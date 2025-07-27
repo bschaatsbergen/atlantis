@@ -280,6 +280,11 @@ func (p *DefaultProjectCommandRunner) Plan(ctx command.ProjectContext) command.P
 		}
 	}
 
+	// Add cancellation context to the project context
+	if cancelCh != nil {
+		ctx.CancelCh = cancelCh
+	}
+
 	planSuccess, failure, err := p.doPlan(ctx)
 	return command.ProjectResult{
 		Command:           command.Plan,
@@ -341,6 +346,11 @@ func (p *DefaultProjectCommandRunner) Apply(ctx command.ProjectContext) command.
 		default:
 			// Continue with apply
 		}
+	}
+
+	// Add cancellation context to the project context
+	if cancelCh != nil {
+		ctx.CancelCh = cancelCh
 	}
 
 	applyOut, failure, err := p.doApply(ctx)
@@ -872,6 +882,16 @@ func (p *DefaultProjectCommandRunner) runSteps(steps []valid.Step, ctx command.P
 
 	envs := make(map[string]string)
 	for _, step := range steps {
+		// Check for cancellation before each step
+		if ctx.CancelCh != nil {
+			select {
+			case <-ctx.CancelCh:
+				return outputs, fmt.Errorf("operation was cancelled by user")
+			default:
+				// Continue with step
+			}
+		}
+
 		var out string
 		var err error
 		switch step.StepName {

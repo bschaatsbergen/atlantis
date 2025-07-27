@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-version"
@@ -354,6 +355,8 @@ func (c *DefaultClient) RunCommandWithVersion(ctx command.ProjectContext, path s
 
 		var lines []string
 		var err error
+
+		// Monitor for cancellation while reading output
 		for line := range outCh {
 			if line.Err != nil {
 				err = line.Err
@@ -473,7 +476,51 @@ func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string,
 	}
 
 	runner := models.NewShellCommandRunner(nil, cmd, envVars, path, true, c.projectCmdOutputHandler)
+
 	inCh, outCh := runner.RunCommandAsync(ctx)
+
+	// If we have a cancellation channel, monitor it in a separate goroutine
+	if ctx.CancelCh != nil {
+		go func() {
+			<-ctx.CancelCh
+			// Gracefully shut down the terraform process
+			if process := runner.GetProcess(); process != nil {
+				ctx.Log.Info("Gracefully cancelling terraform command due to user request")
+
+				// Step 1: Try graceful shutdown with SIGTERM
+				if err := process.Signal(os.Interrupt); err != nil {
+					ctx.Log.Debug("Failed to send SIGTERM: %v, trying SIGKILL", err)
+					// Fallback to forceful kill if SIGTERM fails
+					if killErr := process.Kill(); killErr != nil {
+						if strings.Contains(killErr.Error(), "process already finished") {
+							ctx.Log.Debug("Terraform process was already finished")
+						} else {
+							ctx.Log.Warn("Failed to kill terraform process: %v", killErr)
+						}
+					} else {
+						ctx.Log.Info("Terraform process terminated forcefully")
+					}
+				} else {
+					ctx.Log.Info("Sent graceful shutdown signal to terraform process")
+
+					// Wait a bit for graceful shutdown, then force kill if needed
+					go func() {
+						time.Sleep(60 * time.Second)
+						// Check if process is still running after graceful shutdown attempt
+						if process.Signal(syscall.Signal(0)) == nil {
+							ctx.Log.Warn("Terraform process didn't respond to graceful shutdown, force killing")
+							if killErr := process.Kill(); killErr != nil && !strings.Contains(killErr.Error(), "process already finished") {
+								ctx.Log.Warn("Failed to force kill terraform process: %v", killErr)
+							} else {
+								ctx.Log.Info("Terraform process force killed after graceful shutdown timeout")
+							}
+						}
+					}()
+				}
+			}
+		}()
+	}
+
 	return inCh, outCh
 }
 
